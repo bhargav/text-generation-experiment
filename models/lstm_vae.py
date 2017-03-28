@@ -131,9 +131,18 @@ solver = tf.train.AdamOptimizer().minimize(vae_loss)
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
+tf.summary.scalar('recon_loss', tf.reduce_mean(recon_loss))
+tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss))
+tf.summary.scalar('vae_loss', vae_loss)
+
+summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
+merged = tf.summary.merge_all()
+
 for it in range(100):
     X_mb = [[random.randrange(vocab_size) for _ in range(max_length)]]
 
-    test_output, _, loss = sess.run(
-        [outputs, solver, vae_loss], feed_dict={sent: X_mb})
-    print('Loss = {}'.format(loss))
+    test_output, _, loss, summary = sess.run(
+        [outputs, solver, vae_loss, merged], feed_dict={sent: X_mb})
+
+    print('Loss: {}'.format(loss))
+    summary_writer.add_summary(summary, it)
