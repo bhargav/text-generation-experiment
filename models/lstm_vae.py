@@ -152,15 +152,17 @@ for it in range(5000):
     # X_mb = [[random.randrange(vocab_size) for _ in range(max_length)]]
     X_mb = [range(max_length)]
 
-    _, _, loss, summary = sess.run(
+    test_output, _, loss, summary = sess.run(
         [outputs, solver, vae_loss, merged], feed_dict={sent: X_mb})
 
     if it % 1000 == 0:
-        samples = sess.run(X_samples, feed_dict={z: np.random.randn(1, z_dim)})
+        test_output = np.argmax(test_output, axis=2)
+        print('Output = {}'.format(test_output))
 
+        print('Loss: {}'.format(loss))
+        summary_writer.add_summary(summary, it)
+
+        # Sample a new z
+        samples = sess.run(X_samples, feed_dict={z: np.random.randn(1, z_dim)})
         targets = np.argmax(samples, axis=2)
         print('Output = {}'.format(targets))
-
-    print('Loss: {}'.format(loss))
-    # print('Sample size: {}'.format(samples.shape))
-    summary_writer.add_summary(summary, it)
