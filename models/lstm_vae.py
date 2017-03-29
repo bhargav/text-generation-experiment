@@ -2,11 +2,11 @@ import numpy as np
 import tensorflow as tf
 import random
 
-z_dim = 100
-h_dim = 128
+z_dim = 16
+h_dim = 16
 keep_prob = 1.0
-batch_size = 1
-vocab_size = 1000
+batch_size = 2
+vocab_size = 32
 start_of_sequence_id = 12
 end_of_sequence_id = 29
 
@@ -23,7 +23,8 @@ def xavier_init(size):
 embeddings = tf.get_variable(
     "embeddings", shape=[vocab_size, embedding_size], dtype=tf.float32)
 
-sentence = tf.placeholder(tf.int32, shape=[batch_size, max_length])
+sentence = tf.placeholder(tf.int32, shape=[batch_size, None])
+batch_sequence_lengths = tf.placeholder(tf.int32, shape=[batch_size])
 z = tf.placeholder(tf.float32, shape=[batch_size, z_dim])
 
 X = tf.nn.embedding_lookup(embeddings, ids=sentence)
@@ -49,16 +50,15 @@ def Q(X):
         decoder_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
             encoder_state=lstm_cell.zero_state(batch_size, tf.float32))
 
-        sequence_lengths = [max_length] * batch_size
-
-        # Get sequence lengths
         _, state, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(
             cell=lstm_cell,
             decoder_fn=decoder_fn,
             inputs=X,
-            sequence_length=sequence_lengths)
+            sequence_length=batch_sequence_lengths)
 
+        # State returned is a tuple of (c, h) for the LSTM Cell
         last_layer_state = state[1]
+
         z_mu = tf.matmul(last_layer_state, Q_W_mu) + Q_b_mu
         z_logvar = tf.matmul(last_layer_state, Q_W_sigma) + Q_b_sigma
 
@@ -112,9 +112,14 @@ def G(z, is_training):
             num_decoder_symbols=vocab_size,
             name="decoder_fn_inference")
 
-        decoder_fn = training_fn if is_training else inference_fn
-        inputs = X if is_training else None
-        sequence_length = [max_length] * batch_size if is_training else None
+        if is_training:
+            decoder_fn = training_fn
+            inputs = X
+            sequence_length = batch_sequence_lengths
+        else:
+            decoder_fn = inference_fn
+            inputs = None
+            sequence_length = None
 
         return tf.contrib.seq2seq.dynamic_rnn_decoder(
             cell=decoder_lstm_cell,
@@ -133,8 +138,9 @@ outputs, _, _ = G(z_sample, is_training=True)
 X_samples, _, _ = G(z, is_training=False)
 
 # Reconstruction loss
+batch_max_length = tf.shape(outputs)[1]
 recon_loss = tf.contrib.seq2seq.sequence_loss(
-    outputs, sentence, weights=tf.ones(shape=[batch_size, max_length]))
+    outputs, sentence, weights=tf.ones(shape=[batch_size, batch_max_length]))
 
 # KL-Divergence loss
 kl_loss = 0.5 * tf.reduce_sum(tf.exp(z_logvar) + z_mu ** 2 - 1. - z_logvar, 1)
@@ -156,14 +162,18 @@ sess.run(tf.global_variables_initializer())
 
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
-for it in range(10):
-    # X_mb = [[random.randrange(vocab_size) for _ in range(max_length)]]
-    X_mb = [range(max_length)]
+for it in range(100):
+    X_mb = [range(random.randrange(1, max_length)) for _ in range(batch_size)]
+    sequence_length = [len(seq) for seq in X_mb]
+    batch_max = max(sequence_length)
+
+    X_mb = [list(seq) + ([0] * (batch_max - len(seq))) for seq in X_mb]
 
     test_output, _, loss, summary = sess.run(
-        [outputs, solver, vae_loss, merged], feed_dict={sentence: X_mb})
+        [outputs, solver, vae_loss, merged],
+        feed_dict={sentence: X_mb, batch_sequence_lengths: sequence_length})
 
-    if it % 1000 == 0:
+    if it % 10 == 0:
         test_output = np.argmax(test_output, axis=2)
         print('Output = {}'.format(test_output))
 
@@ -171,6 +181,6 @@ for it in range(10):
         summary_writer.add_summary(summary, it)
 
         # Sample a new z
-        samples = sess.run(X_samples, feed_dict={z: np.random.randn(1, z_dim)})
+        samples = sess.run(X_samples, feed_dict={z: np.random.randn(batch_size, z_dim)})
         targets = np.argmax(samples, axis=2)
-        print('Output = {}'.format(targets))
+        print('Sample = {}'.format(targets))
