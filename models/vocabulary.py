@@ -4,13 +4,15 @@ import collections
 import dill as pickle
 
 UNK_WORD = '<unk_word>'  # Unknown word
+SOS = '<go>'  # Start-of-Sentence Token
 EOS = '<eos>'  # End-of-Sentence Token
 
 
-class vocabulary(object):
+class Vocabulary(object):
 
     def __init__(self, data=[]):
         data.append(UNK_WORD)
+        data.append(SOS)
         data.append(EOS)
 
         self._counter = counter = collections.Counter(data)
@@ -30,7 +32,7 @@ class vocabulary(object):
         with open(file_name, 'r') as file:
             items = pickle.load(file)
 
-        vocab_instance = vocabulary()
+        vocab_instance = Vocabulary()
         vocab_instance._counter = items["counter"]
         vocab_instance.vocab = items["vocab"]
 
@@ -40,5 +42,5 @@ class vocabulary(object):
 if __name__ == "__main__":
     test_data = ["a", "aa", "ba", "aa", "c"]
 
-    v = vocabulary(test_data)
+    v = Vocabulary(test_data)
     print(v.vocab)
