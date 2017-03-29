@@ -23,43 +23,46 @@ def xavier_init(size):
 embeddings = tf.get_variable(
     "embeddings", shape=[vocab_size, embedding_size], dtype=tf.float32)
 
-sent = tf.placeholder(tf.int32, shape=[None, max_length])
-z = tf.placeholder(tf.float32, shape=[None, z_dim])
+sentence = tf.placeholder(tf.int32, shape=[batch_size, max_length])
+z = tf.placeholder(tf.float32, shape=[batch_size, z_dim])
 
-X = tf.nn.embedding_lookup(embeddings, ids=sent)
+X = tf.nn.embedding_lookup(embeddings, ids=sentence)
 
 # =============================== Q(z|X) ======================================
 
-lstm_cell = tf.contrib.rnn.BasicLSTMCell(h_dim, state_is_tuple=True)
+with tf.variable_scope("encoder"):
+    lstm_cell = tf.contrib.rnn.BasicLSTMCell(h_dim, state_is_tuple=True)
 
-if (keep_prob < 1.0):
-    lstm_cell = tf.contrib.rnn.DropoutWrapper(
-        lstm_cell, output_keep_prob=keep_prob)
+    if (keep_prob < 1.0):
+        lstm_cell = tf.contrib.rnn.DropoutWrapper(
+            lstm_cell, output_keep_prob=keep_prob)
 
-Q_W_mu = tf.Variable(xavier_init([h_dim, z_dim]))
-Q_b_mu = tf.Variable(tf.zeros(shape=[z_dim]))
+    Q_W_mu = tf.Variable(xavier_init([h_dim, z_dim]))
+    Q_b_mu = tf.Variable(tf.zeros(shape=[z_dim]))
 
-Q_W_sigma = tf.Variable(xavier_init([h_dim, z_dim]))
-Q_b_sigma = tf.Variable(tf.zeros(shape=[z_dim]))
+    Q_W_sigma = tf.Variable(xavier_init([h_dim, z_dim]))
+    Q_b_sigma = tf.Variable(tf.zeros(shape=[z_dim]))
 
 
 def Q(X):
-    decoder_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
-        encoder_state=lstm_cell.zero_state(batch_size, tf.float32))
+    with tf.variable_scope("encoder"):
+        decoder_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
+            encoder_state=lstm_cell.zero_state(batch_size, tf.float32))
 
-    sequence_lengths = [max_length] * batch_size
+        sequence_lengths = [max_length] * batch_size
 
-    # Get sequence lengths
-    _, state, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(
-        cell=lstm_cell,
-        decoder_fn=decoder_fn,
-        inputs=X,
-        sequence_length=sequence_lengths)
+        # Get sequence lengths
+        _, state, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(
+            cell=lstm_cell,
+            decoder_fn=decoder_fn,
+            inputs=X,
+            sequence_length=sequence_lengths)
 
-    last_layer_state = state[1]
-    z_mu = tf.matmul(last_layer_state, Q_W_mu) + Q_b_mu
-    z_logvar = tf.matmul(last_layer_state, Q_W_sigma) + Q_b_sigma
-    return z_mu, z_logvar
+        last_layer_state = state[1]
+        z_mu = tf.matmul(last_layer_state, Q_W_mu) + Q_b_mu
+        z_logvar = tf.matmul(last_layer_state, Q_W_sigma) + Q_b_sigma
+
+        return z_mu, z_logvar
 
 
 def sample_z(mu, log_var):
@@ -129,31 +132,36 @@ outputs, _, _ = G(z_sample, is_training=True)
 # Samples from random z
 X_samples, _, _ = G(z, is_training=False)
 
+# Reconstruction loss
 recon_loss = tf.contrib.seq2seq.sequence_loss(
-    outputs, sent, weights=tf.ones(shape=[batch_size, max_length]))
+    outputs, sentence, weights=tf.ones(shape=[batch_size, max_length]))
 
+# KL-Divergence loss
 kl_loss = 0.5 * tf.reduce_sum(tf.exp(z_logvar) + z_mu ** 2 - 1. - z_logvar, 1)
 
+# Combined VAE loss
 vae_loss = tf.reduce_mean(recon_loss + kl_loss)
 
 solver = tf.train.AdamOptimizer().minimize(vae_loss)
 
-sess = tf.Session()
-sess.run(tf.global_variables_initializer())
-
+# Summaries to track
 tf.summary.scalar('recon_loss', tf.reduce_mean(recon_loss))
 tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss))
 tf.summary.scalar('vae_loss', vae_loss)
 
-summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 merged = tf.summary.merge_all()
 
-for it in range(5000):
+sess = tf.Session()
+sess.run(tf.global_variables_initializer())
+
+summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
+
+for it in range(10):
     # X_mb = [[random.randrange(vocab_size) for _ in range(max_length)]]
     X_mb = [range(max_length)]
 
     test_output, _, loss, summary = sess.run(
-        [outputs, solver, vae_loss, merged], feed_dict={sent: X_mb})
+        [outputs, solver, vae_loss, merged], feed_dict={sentence: X_mb})
 
     if it % 1000 == 0:
         test_output = np.argmax(test_output, axis=2)
