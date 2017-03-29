@@ -5,19 +5,13 @@ import random
 z_dim = 16
 h_dim = 16
 keep_prob = 1.0
-batch_size = 2
+batch_size = 1
 vocab_size = 32
 start_of_sequence_id = 12
 end_of_sequence_id = 29
 
 max_length = 16
 embedding_size = 128
-
-
-def xavier_init(size):
-    in_dim = size[0]
-    xavier_stddev = 1. / tf.sqrt(in_dim / 2.)
-    return tf.random_normal(shape=size, stddev=xavier_stddev)
 
 
 embeddings = tf.get_variable(
@@ -38,12 +32,6 @@ with tf.variable_scope("encoder"):
         lstm_cell = tf.contrib.rnn.DropoutWrapper(
             lstm_cell, output_keep_prob=keep_prob)
 
-    Q_W_mu = tf.Variable(xavier_init([h_dim, z_dim]))
-    Q_b_mu = tf.Variable(tf.zeros(shape=[z_dim]))
-
-    Q_W_sigma = tf.Variable(xavier_init([h_dim, z_dim]))
-    Q_b_sigma = tf.Variable(tf.zeros(shape=[z_dim]))
-
 
 def Q(X):
     with tf.variable_scope("encoder"):
@@ -57,10 +45,19 @@ def Q(X):
             sequence_length=batch_sequence_lengths)
 
         # State returned is a tuple of (c, h) for the LSTM Cell
-        last_layer_state = state[1]
+        last_layer_h = state[1]
 
-        z_mu = tf.matmul(last_layer_state, Q_W_mu) + Q_b_mu
-        z_logvar = tf.matmul(last_layer_state, Q_W_sigma) + Q_b_sigma
+        z_mu = tf.contrib.layers.fully_connected(
+            inputs=last_layer_h,
+            num_outputs=z_dim,
+            weights_initializer=tf.contrib.layers.xavier_initializer(),
+            biases_initializer=tf.zeros_initializer())
+
+        z_logvar = tf.contrib.layers.fully_connected(
+            inputs=last_layer_h,
+            num_outputs=z_dim,
+            weights_initializer=tf.contrib.layers.xavier_initializer(),
+            biases_initializer=tf.zeros_initializer())
 
         return z_mu, z_logvar
 
@@ -74,9 +71,6 @@ def sample_z(mu, log_var):
 
 
 with tf.variable_scope("generator"):
-    P_W1 = tf.Variable(xavier_init([z_dim, h_dim]))
-    P_b1 = tf.Variable(tf.zeros(shape=[h_dim]))
-
     decoder_lstm_cell = tf.contrib.rnn.BasicLSTMCell(
         h_dim, state_is_tuple=True)
 
@@ -90,10 +84,23 @@ def G(z, is_training):
         if not is_training:
             varscope.reuse_variables()
 
-        decoder_initial_state = tf.nn.relu(tf.matmul(z, P_W1) + P_b1)
+        # decoder_initial_c = tf.contrib.layers.fully_connected(
+        #     inputs=z,
+        #     num_outputs=h_dim,
+        #     activation_fn=tf.nn.relu,
+        #     weights_initializer=tf.contrib.layers.xavier_initializer(),
+        #     biases_initializer=tf.zeros_initializer())
+
+        decoder_initial_h = tf.contrib.layers.fully_connected(
+            inputs=z,
+            num_outputs=h_dim,
+            activation_fn=tf.nn.relu,
+            weights_initializer=tf.contrib.layers.xavier_initializer(),
+            biases_initializer=tf.zeros_initializer())
+
         initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
-            tf.zeros(shape=[batch_size, h_dim], dtype=tf.float32),
-            decoder_initial_state)
+            tf.zeros(shape=[batch_size, h_dim]),
+            decoder_initial_h)
 
         def output_fn(x):
             return tf.contrib.layers.linear(x, vocab_size, scope=varscope)
@@ -162,18 +169,18 @@ sess.run(tf.global_variables_initializer())
 
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
-for it in range(100):
-    X_mb = [range(random.randrange(1, max_length)) for _ in range(batch_size)]
+for it in range(10000):
+    X_mb = [range(0, max_length) for _ in range(batch_size)]
     sequence_length = [len(seq) for seq in X_mb]
     batch_max = max(sequence_length)
 
     X_mb = [list(seq) + ([0] * (batch_max - len(seq))) for seq in X_mb]
 
-    test_output, _, loss, summary = sess.run(
-        [outputs, solver, vae_loss, merged],
+    test_output, test_z, _, loss, summary = sess.run(
+        [outputs, z_sample, solver, vae_loss, merged],
         feed_dict={sentence: X_mb, batch_sequence_lengths: sequence_length})
 
-    if it % 10 == 0:
+    if it % 1000 == 0:
         test_output = np.argmax(test_output, axis=2)
         print('Output = {}'.format(test_output))
 
@@ -181,6 +188,7 @@ for it in range(100):
         summary_writer.add_summary(summary, it)
 
         # Sample a new z
-        samples = sess.run(X_samples, feed_dict={z: np.random.randn(batch_size, z_dim)})
+        # test_z = np.random.randn(batch_size, z_dim)
+        samples = sess.run(X_samples, feed_dict={z: test_z})
         targets = np.argmax(samples, axis=2)
         print('Sample = {}'.format(targets))
