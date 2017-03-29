@@ -2,25 +2,27 @@ import numpy as np
 import tensorflow as tf
 import random
 
-z_dim = 16
-h_dim = 16
+z_dim = 20
+h_dim = 20
 keep_prob = 1.0
 batch_size = 1
 vocab_size = 32
-start_of_sequence_id = 12
-end_of_sequence_id = 29
+start_of_sequence_id = 0
+end_of_sequence_id = 15
 
 max_length = 16
-embedding_size = 128
+embedding_size = 40
 
 
 embeddings = tf.get_variable(
     "embeddings", shape=[vocab_size, embedding_size], dtype=tf.float32)
 
+# [B,L]
 sentence = tf.placeholder(tf.int32, shape=[batch_size, None])
 batch_sequence_lengths = tf.placeholder(tf.int32, shape=[batch_size])
 z = tf.placeholder(tf.float32, shape=[batch_size, z_dim])
 
+# [B, L, D]
 X = tf.nn.embedding_lookup(embeddings, ids=sentence)
 
 # =============================== Q(z|X) ======================================
@@ -34,7 +36,7 @@ with tf.variable_scope("encoder"):
 
 
 def Q(X):
-    with tf.variable_scope("encoder"):
+    with tf.variable_scope("encoder") as varscope:
         decoder_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
             encoder_state=lstm_cell.zero_state(batch_size, tf.float32))
 
@@ -47,12 +49,14 @@ def Q(X):
         # State returned is a tuple of (c, h) for the LSTM Cell
         last_layer_h = state[1]
 
+        # [B, Z]
         z_mu = tf.contrib.layers.fully_connected(
             inputs=last_layer_h,
             num_outputs=z_dim,
             weights_initializer=tf.contrib.layers.xavier_initializer(),
             biases_initializer=tf.zeros_initializer())
 
+        # [B, Z]
         z_logvar = tf.contrib.layers.fully_connected(
             inputs=last_layer_h,
             num_outputs=z_dim,
@@ -78,6 +82,15 @@ with tf.variable_scope("generator"):
         decoder_lstm_cell = tf.contrib.rnn.DropoutWrapper(
             decoder_lstm_cell, output_keep_prob=keep_prob)
 
+    W_softmax = tf.get_variable(
+        name="softmax_weights",
+        shape=[h_dim, vocab_size],
+        initializer=tf.contrib.layers.xavier_initializer())
+    b_softmax = tf.get_variable(
+        name="softmax_biases",
+        shape=[vocab_size],
+        initializer=tf.zeros_initializer())
+
 
 def G(z, is_training):
     with tf.variable_scope("generator") as varscope:
@@ -102,11 +115,11 @@ def G(z, is_training):
             tf.zeros(shape=[batch_size, h_dim]),
             decoder_initial_h)
 
-        def output_fn(x):
-            return tf.contrib.layers.linear(x, vocab_size, scope=varscope)
-
         training_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
             encoder_state=initial_state_tuple)
+
+        def output_fn(x):
+            return tf.matmul(x, W_softmax) + b_softmax
 
         # Should this be encoder's last state
         inference_fn = tf.contrib.seq2seq.simple_decoder_fn_inference(
@@ -128,11 +141,19 @@ def G(z, is_training):
             inputs = None
             sequence_length = None
 
-        return tf.contrib.seq2seq.dynamic_rnn_decoder(
+        outputs, final_state, final_context = tf.contrib.seq2seq.dynamic_rnn_decoder(
             cell=decoder_lstm_cell,
             decoder_fn=decoder_fn,
             inputs=inputs,
             sequence_length=sequence_length)
+
+        if is_training:
+            # Calculate logits and return output
+            reshaped_output = tf.reshape(outputs, shape=[-1, h_dim])
+            logits = output_fn(reshaped_output)
+            outputs = tf.reshape(logits, shape=[batch_size, -1, vocab_size])
+
+        return outputs, final_state, final_context
 
 # =============================== TRAINING ====================================
 
@@ -180,7 +201,7 @@ for it in range(10000):
         [outputs, z_sample, solver, vae_loss, merged],
         feed_dict={sentence: X_mb, batch_sequence_lengths: sequence_length})
 
-    if it % 1000 == 0:
+    if it % 100 == 0:
         test_output = np.argmax(test_output, axis=2)
         print('Output = {}'.format(test_output))
 
