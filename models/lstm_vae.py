@@ -2,16 +2,16 @@ import numpy as np
 import tensorflow as tf
 import random
 
-z_dim = 20
-h_dim = 20
+z_dim = 5
+h_dim = 10
 keep_prob = 1.0
 batch_size = 1
-vocab_size = 32
+vocab_size = 16
 start_of_sequence_id = 0
 end_of_sequence_id = 15
 
 max_length = 16
-embedding_size = 40
+embedding_size = 4
 
 
 embeddings = tf.get_variable(
@@ -166,9 +166,10 @@ outputs, _, _ = G(z_sample, is_training=True)
 X_samples, _, _ = G(z, is_training=False)
 
 # Reconstruction loss
-batch_max_length = tf.shape(outputs)[1]
+loss_mask = tf.sequence_mask(
+    batch_sequence_lengths, batch_size, dtype=tf.float32)
 recon_loss = tf.contrib.seq2seq.sequence_loss(
-    outputs, sentence, weights=tf.ones(shape=[batch_size, batch_max_length]))
+    outputs, sentence, weights=loss_mask)
 
 # KL-Divergence loss
 kl_loss = 0.5 * tf.reduce_sum(tf.exp(z_logvar) + z_mu ** 2 - 1. - z_logvar, 1)
@@ -191,7 +192,7 @@ sess.run(tf.global_variables_initializer())
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
 for it in range(10000):
-    X_mb = [range(0, max_length) for _ in range(batch_size)]
+    X_mb = [range(random.randrange(5, max_length)) for _ in range(batch_size)]
     sequence_length = [len(seq) for seq in X_mb]
     batch_max = max(sequence_length)
 
@@ -205,11 +206,13 @@ for it in range(10000):
         test_output = np.argmax(test_output, axis=2)
         print('Output = {}'.format(test_output))
 
-        print('Loss: {}'.format(loss))
-        summary_writer.add_summary(summary, it)
+        print('Z_sample = {}'.format(test_z))
 
         # Sample a new z
         # test_z = np.random.randn(batch_size, z_dim)
         samples = sess.run(X_samples, feed_dict={z: test_z})
         targets = np.argmax(samples, axis=2)
         print('Sample = {}'.format(targets))
+
+        print('Loss: {}'.format(loss))
+        summary_writer.add_summary(summary, it)
