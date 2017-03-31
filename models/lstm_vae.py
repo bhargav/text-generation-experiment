@@ -93,23 +93,16 @@ with tf.variable_scope("generator"):
 
 def G_train(z):
     with tf.variable_scope("generator"):
-        # decoder_initial_c = tf.contrib.layers.fully_connected(
-        #     inputs=z,
-        #     num_outputs=h_dim,
-        #     activation_fn=tf.nn.relu,
-        #     weights_initializer=tf.contrib.layers.xavier_initializer(),
-        #     biases_initializer=tf.zeros_initializer())
-
-        # decoder_initial_h = tf.contrib.layers.fully_connected(
-        #     inputs=z,
-        #     num_outputs=h_dim,
-        #     activation_fn=tf.nn.relu,
-        #     weights_initializer=tf.contrib.layers.xavier_initializer(),
-        #     biases_initializer=tf.zeros_initializer())
+        decoder_initial_h = tf.contrib.layers.fully_connected(
+            inputs=z,
+            num_outputs=h_dim,
+            activation_fn=tf.nn.relu,
+            weights_initializer=tf.contrib.layers.xavier_initializer(),
+            biases_initializer=tf.zeros_initializer())
 
         initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
             tf.zeros(shape=[batch_size, h_dim]),
-            z)
+            decoder_initial_h)
 
         training_fn = tf.contrib.seq2seq.simple_decoder_fn_train(
             encoder_state=initial_state_tuple)
@@ -130,26 +123,19 @@ def G_train(z):
 
 def G_prediction(z):
     with tf.variable_scope("generator") as varscope:
-        initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
-            tf.zeros(shape=[batch_size, h_dim]),
-            z)
-
         # Reuse trained weights
         varscope.reuse_variables()
 
-        # decoder_initial_c = tf.contrib.layers.fully_connected(
-        #     inputs=z,
-        #     num_outputs=h_dim,
-        #     activation_fn=tf.nn.relu,
-        #     weights_initializer=tf.contrib.layers.xavier_initializer(),
-        #     biases_initializer=tf.zeros_initializer())
+        decoder_initial_h = tf.contrib.layers.fully_connected(
+            inputs=z,
+            num_outputs=h_dim,
+            activation_fn=tf.nn.relu,
+            weights_initializer=tf.contrib.layers.xavier_initializer(),
+            biases_initializer=tf.zeros_initializer())
 
-        # decoder_initial_h = tf.contrib.layers.fully_connected(
-        #     inputs=z,
-        #     num_outputs=h_dim,
-        #     activation_fn=tf.nn.relu,
-        #     weights_initializer=tf.contrib.layers.xavier_initializer(),
-        #     biases_initializer=tf.zeros_initializer())
+        initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
+            tf.zeros(shape=[batch_size, h_dim]),
+            decoder_initial_h)
 
         def output_fn(x):
             """Used to convert cell outputs to logits"""
@@ -188,12 +174,10 @@ recon_loss = tf.contrib.seq2seq.sequence_loss(
     outputs, sentence, weights=loss_mask)
 
 # KL-Divergence loss
-kl_loss = 0.5 * tf.reduce_sum(tf.exp(z_logvar) + z_mu ** 2 - 1. - z_logvar, 1)
+kl_loss = 0.5 * tf.reduce_sum(tf.exp(z_logvar) + z_mu**2 - 1. - z_logvar, 1)
 
 # Combined VAE loss
-# 0.001 * tf.reduce_sum(tf.nn.l2_loss(z_sample))
-vae_loss = tf.reduce_mean(recon_loss)
-# vae_loss = tf.reduce_mean(recon_loss + kl_loss)
+vae_loss = tf.reduce_mean(recon_loss + 0.05 * kl_loss)
 
 solver = tf.train.AdamOptimizer().minimize(vae_loss)
 
@@ -219,7 +203,8 @@ sess.run(tf.global_variables_initializer())
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
 for it in range(10000):
-    X_mb = [range(random.randrange(5, max_length)) for _ in range(batch_size)]
+    # Generate sequences of length in [10, 15]
+    X_mb = [range(random.randrange(10, max_length)) for _ in range(batch_size)]
     sequence_length = [len(seq) for seq in X_mb]
     batch_max = max(sequence_length)
 
@@ -227,7 +212,7 @@ for it in range(10000):
     X_mb = [list(seq) + ([0] * (batch_max - len(seq))) for seq in X_mb]
 
     test_output, test_z, test_z_mu, test_z_logvar, _, loss, summary = sess.run(
-        [outputs, z_sample, z_sample, z_sample, solver, vae_loss, merged],
+        [outputs, z_sample, z_mu, z_logvar, solver, vae_loss, merged],
         feed_dict={sentence: X_mb, batch_sequence_lengths: sequence_length})
 
     summary_writer.add_summary(summary, it)
