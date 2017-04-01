@@ -1,17 +1,21 @@
+from __future__ import absolute_import
+
 import numpy as np
 import tensorflow as tf
-import random
+
+from synthetic_dataset import SyntheticDataset
 
 z_dim = 5
 h_dim = 5
-keep_prob = 0.9
-batch_size = 1
-vocab_size = 16
-start_of_sequence_id = 15
-end_of_sequence_id = 15
-
-max_length = 16
 embedding_size = 2
+keep_prob = 0.9
+
+batch_size = 1
+max_length = 16
+
+vocab_size = 16
+start_of_sequence_id = 0
+end_of_sequence_id = max_length - 1
 
 
 embeddings = tf.get_variable(
@@ -202,9 +206,15 @@ sess.run(tf.global_variables_initializer())
 
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
+dataset = SyntheticDataset(
+    num_emb=vocab_size,
+    seq_length=max_length - 1,  # Reduce size to account for start token
+    start_token=start_of_sequence_id)
+
 for it in range(10000):
-    # Generate sequences of length in [10, 15]
-    X_mb = [range(random.randrange(10, max_length)) for _ in range(batch_size)]
+    # Prepend the start-of-sequence token before each sentence.
+    X_mb = [[start_of_sequence_id] + dataset.get_random_sequence()
+            for size in range(batch_size)]
     sequence_length = [len(seq) for seq in X_mb]
     batch_max = max(sequence_length)
 
@@ -219,6 +229,7 @@ for it in range(10000):
 
     if it % 100 == 0:
         test_output = np.argmax(test_output, axis=2)
+        print('Input = {}'.format(X_mb))
         print('Output = {}'.format(test_output))
 
         print('z_sample = {}'.format(test_z))
