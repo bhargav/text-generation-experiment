@@ -15,7 +15,7 @@ max_length = 16
 
 vocab_size = 16
 start_of_sequence_id = 0
-end_of_sequence_id = max_length - 1
+end_of_sequence_id = vocab_size - 1
 
 
 embeddings = tf.get_variable(
@@ -207,13 +207,13 @@ sess.run(tf.global_variables_initializer())
 summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
 dataset = SyntheticDataset(
-    num_emb=vocab_size,
-    seq_length=max_length - 1,  # Reduce size to account for start token
+    num_emb=vocab_size - 1,
+    seq_length=max_length - 2,  # Reduce size to account for start, end token
     start_token=start_of_sequence_id)
 
 for it in range(10000):
     # Prepend the start-of-sequence token before each sentence.
-    X_mb = [[start_of_sequence_id] + dataset.get_random_sequence()
+    X_mb = [[start_of_sequence_id] + dataset.get_random_sequence() + [end_of_sequence_id]
             for size in range(batch_size)]
     sequence_length = [len(seq) for seq in X_mb]
     batch_max = max(sequence_length)
@@ -229,6 +229,7 @@ for it in range(10000):
 
     if it % 100 == 0:
         test_output = np.argmax(test_output, axis=2)
+        print('Epoch = {}'.format(it))
         print('Input = {}'.format(X_mb))
         print('Output = {}'.format(test_output))
 
