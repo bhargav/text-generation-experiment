@@ -9,7 +9,6 @@ EOS = '<eos>'  # End-of-Sentence Token
 
 
 class Vocabulary(object):
-
     def __init__(self, data=[]):
         data.append(UNK_WORD)
         data.append(SOS)

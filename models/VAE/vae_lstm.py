@@ -50,12 +50,10 @@ class VAE_LSTM_Model(object):
     def build_encoder_network(self):
         with tf.variable_scope("encoder"):
             lstm_cell_fw = tf.contrib.rnn.BasicLSTMCell(
-                self.enc_hidden_dims,
-                state_is_tuple=True)
+                self.enc_hidden_dims, state_is_tuple=True)
 
             lstm_cell_bw = tf.contrib.rnn.BasicLSTMCell(
-                self.enc_hidden_dims,
-                state_is_tuple=True)
+                self.enc_hidden_dims, state_is_tuple=True)
 
             if (self.enc_keep_prob < 1.0):
                 lstm_cell_fw = tf.contrib.rnn.DropoutWrapper(
@@ -65,7 +63,7 @@ class VAE_LSTM_Model(object):
                     lstm_cell_bw, output_keep_prob=self.enc_keep_prob)
 
             # lstm_initial_state = lstm_cell_fw.zero_state(
-                # self.batch_size, tf.float32)
+            # self.batch_size, tf.float32)
 
             self._enc_embeddings = tf.get_variable(
                 "embeddings",
@@ -151,8 +149,8 @@ class VAE_LSTM_Model(object):
             # Calculate logits and return output
             reshaped_output = tf.reshape(
                 outputs, shape=[-1, self.dec_hidden_dims])
-            logits = tf.matmul(
-                reshaped_output, self._dec_W_softmax) + self._dec_b_softmax
+            logits = tf.matmul(reshaped_output,
+                               self._dec_W_softmax) + self._dec_b_softmax
             logits = tf.reshape(
                 logits, shape=[self.batch_size, -1, self.vocab_size])
 
@@ -162,6 +160,7 @@ class VAE_LSTM_Model(object):
 
     def build_inference(self):
         with tf.variable_scope("decoder", reuse=True):
+
             def output_fn(x):
                 """Used to convert cell outputs to logits"""
                 return tf.matmul(x, self._dec_W_softmax) + self._dec_b_softmax
@@ -206,11 +205,12 @@ class VAE_LSTM_Model(object):
                 tf.exp(self.z_logvar) + self.z_mu**2 - 1. - self.z_logvar, 1)
 
             # Combined VAE loss
-            vae_loss = tf.reduce_mean(recon_loss) + 0.003 * tf.nn.l2_loss(self.z)
+            vae_loss = tf.reduce_mean(recon_loss) + 0.003 * tf.nn.l2_loss(
+                self.z)
 
             # Summaries to track
-            tf.summary.scalar(
-                'reconstruction_loss', tf.reduce_mean(recon_loss))
+            tf.summary.scalar('reconstruction_loss',
+                              tf.reduce_mean(recon_loss))
             tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss))
             tf.summary.scalar('vae_loss', vae_loss)
 
@@ -247,8 +247,8 @@ if __name__ == "__main__":
     summary_writer = tf.summary.FileWriter("logs/exp", sess.graph)
 
     for iteration in range(100000):
-        X_batch = [[start_of_sequence_id] + dataset.get_random_sequence() + [end_of_sequence_id]
-                   for size in range(batch_size)]
+        X_batch = [[start_of_sequence_id] + dataset.get_random_sequence() +
+                   [end_of_sequence_id] for size in range(batch_size)]
         sequence_length = [len(seq) for seq in X_batch]
 
         # Padding to make sure all inputs have the same length.
@@ -256,9 +256,14 @@ if __name__ == "__main__":
         train_op = model._train_op
 
         dec_logits, loss, z_sample, z_mu, z_logvar, summary, _ = sess.run(
-            [model._dec_logits, model._loss, model.z,
-                model.z_mu, model.z_logvar, merged, train_op],
-            feed_dict={model.X: X_batch, model.batch_sequence_lengths: sequence_length})
+            [
+                model._dec_logits, model._loss, model.z, model.z_mu,
+                model.z_logvar, merged, train_op
+            ],
+            feed_dict={
+                model.X: X_batch,
+                model.batch_sequence_lengths: sequence_length
+            })
 
         summary_writer.add_summary(summary, iteration)
 
@@ -271,8 +276,7 @@ if __name__ == "__main__":
             print('z_logvar = {}'.format(z_logvar))
 
             inf_logits = sess.run(
-                model._inf_logits,
-                feed_dict={model.z: z_sample})
+                model._inf_logits, feed_dict={model.z: z_sample})
 
             output_sample = np.argmax(inf_logits, axis=2)
             print('Output Sample = {}'.format(output_sample))
