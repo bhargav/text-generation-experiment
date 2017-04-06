@@ -7,7 +7,7 @@ from __future__ import absolute_import
 import tensorflow as tf
 import numpy as np
 
-from synthetic_dataset import SyntheticDataset
+from readers.synthetic_dataset import SyntheticDataset
 
 
 class VAE_LSTM_Model(object):
