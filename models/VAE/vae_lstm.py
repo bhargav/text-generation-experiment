@@ -17,10 +17,11 @@ class VAE_LSTM_Model(object):
         super(VAE_LSTM_Model, self).__init__()
         self.batch_size = batch_size = 10
         self.z_dim = 5
-        self.vocab_size = 16
-        self.embedding_size = 2
+        self.vocab_size = 20
+        self.embedding_size = 5
         self.start_of_sequence_id = 0
         self.end_of_sequence_id = 15
+        self.go_token_id = 17
         self.max_length = 16
 
         # Encoder parameters
@@ -28,7 +29,7 @@ class VAE_LSTM_Model(object):
         self.enc_keep_prob = 0.9
 
         # Decoder parameters
-        self.dec_hidden_dims = 10
+        self.dec_hidden_dims = 5
         self.dec_keep_prob = 0.7
 
         # [batch_size, max_sentence_length]
@@ -62,9 +63,6 @@ class VAE_LSTM_Model(object):
                 lstm_cell_bw = tf.contrib.rnn.DropoutWrapper(
                     lstm_cell_bw, output_keep_prob=self.enc_keep_prob)
 
-            # lstm_initial_state = lstm_cell_fw.zero_state(
-            # self.batch_size, tf.float32)
-
             self._enc_embeddings = tf.get_variable(
                 "embeddings",
                 shape=[self.vocab_size, self.embedding_size],
@@ -73,6 +71,13 @@ class VAE_LSTM_Model(object):
             encoder_input = tf.nn.embedding_lookup(
                 self._enc_embeddings, ids=self.X)
 
+            # _, states = tf.nn.dynamic_rnn(
+            #     cell=lstm_cell_fw,
+            #     inputs=encoder_input,
+            #     initial_state=lstm_cell_fw.zero_state(batch_size=self.batch_size, dtype=tf.float32),
+            #     sequence_length=self.batch_sequence_lengths,
+            #     dtype=tf.float32)
+
             _, states = tf.nn.bidirectional_dynamic_rnn(
                 cell_fw=lstm_cell_fw,
                 cell_bw=lstm_cell_bw,
@@ -80,29 +85,31 @@ class VAE_LSTM_Model(object):
                 sequence_length=self.batch_sequence_lengths,
                 dtype=tf.float32)
 
-            self._enc_final_state = states
+            self._enc_final_state = (states[0][1] + states[1][1]) / 2.
 
             # State returned is a tuple of (c, h) for the LSTM Cell
             last_layer_h = (states[0][1] + states[1][1]) / 2.
+            # last_layer_h = states[1]
 
             # [B, Z]
-            self.z_mu = tf.contrib.layers.fully_connected(
+            self.z_mu = tf.layers.dense(
                 inputs=last_layer_h,
-                num_outputs=self.z_dim,
-                weights_initializer=tf.contrib.layers.xavier_initializer(),
-                biases_initializer=tf.zeros_initializer())
+                units=self.z_dim,
+                kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                bias_initializer=tf.zeros_initializer(),
+                name="encoder_to_z_mu")
 
             # [B, Z]
-            self.z_logvar = tf.contrib.layers.fully_connected(
+            self.z_logvar = tf.layers.dense(
                 inputs=last_layer_h,
-                num_outputs=self.z_dim,
-                weights_initializer=tf.contrib.layers.xavier_initializer(),
-                biases_initializer=tf.zeros_initializer())
+                units=self.z_dim,
+                kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                bias_initializer=tf.zeros_initializer(),
+                name="encoder_to_z_logvar")
 
     def build_decoder_network(self):
         with tf.variable_scope("decoder"):
-            decoder_lstm_cell = tf.contrib.rnn.BasicLSTMCell(
-                self.dec_hidden_dims, state_is_tuple=True)
+            decoder_lstm_cell = tf.contrib.rnn.GRUCell(self.dec_hidden_dims)
 
             if (self.dec_keep_prob < 1.0):
                 decoder_lstm_cell = tf.contrib.rnn.DropoutWrapper(
@@ -110,16 +117,17 @@ class VAE_LSTM_Model(object):
 
             self._dec_lstm_cell = decoder_lstm_cell
 
-            decoder_initial_h = tf.contrib.layers.fully_connected(
+            decoder_initial_h = tf.layers.dense(
                 inputs=self.z,
-                num_outputs=self.dec_hidden_dims,
-                activation_fn=tf.nn.relu,
-                weights_initializer=tf.contrib.layers.xavier_initializer(),
-                biases_initializer=tf.zeros_initializer())
+                units=self.dec_hidden_dims,
+                activation=tf.nn.relu,
+                kernel_initializer=tf.contrib.layers.xavier_initializer())
 
-            initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
-                tf.zeros(shape=[self.batch_size, self.dec_hidden_dims]),
-                decoder_initial_h)
+            # initial_state_tuple = tf.contrib.rnn.LSTMStateTuple(
+            #     tf.zeros(shape=[self.batch_size, self.dec_hidden_dims]),
+            #     decoder_initial_h)
+
+            initial_state_tuple = decoder_initial_h
             self._dec_initial_state_tuple = initial_state_tuple
 
             self._dec_embeddings = tf.get_variable(
@@ -128,8 +136,14 @@ class VAE_LSTM_Model(object):
                 dtype=tf.float32,
                 initializer=tf.random_normal_initializer())
 
+            go_token = tf.convert_to_tensor([self.go_token_id] * self.batch_size, dtype=tf.int64)
+            go_token = tf.reshape(go_token, shape=[batch_size, -1])
+
+            raw_input = tf.concat([go_token, self.X], axis=1)
+            raw_input = tf.slice(raw_input, [0, 0], size=tf.shape(self.X))
+
             decoder_input = tf.nn.embedding_lookup(
-                self._dec_embeddings, ids=self.X)
+                self._dec_embeddings, ids=raw_input)
 
             outputs, final_state = tf.nn.dynamic_rnn(
                 cell=decoder_lstm_cell,
@@ -146,30 +160,29 @@ class VAE_LSTM_Model(object):
                 shape=[self.vocab_size],
                 initializer=tf.zeros_initializer())
 
-            # Calculate logits and return output
-            reshaped_output = tf.reshape(
-                outputs, shape=[-1, self.dec_hidden_dims])
-            logits = tf.matmul(reshaped_output,
-                               self._dec_W_softmax) + self._dec_b_softmax
-            logits = tf.reshape(
-                logits, shape=[self.batch_size, -1, self.vocab_size])
+            # # Calculate logits and return output
+            reshaped_output = tf.reshape(outputs, shape=[-1, self.dec_hidden_dims])
+            logits = tf.matmul(reshaped_output, self._dec_W_softmax) + self._dec_b_softmax
+            logits = tf.reshape(logits, shape=[self.batch_size, -1, self.vocab_size])
 
-            self._dec_outputs = outputs
             self._dec_logits = logits
             self._dec_final_state = final_state
 
     def build_inference(self):
         with tf.variable_scope("decoder", reuse=True):
 
+            w_softmax = tf.get_variable("softmax_weights")
+            b_softmax = tf.get_variable("softmax_biases")
+
             def output_fn(x):
                 """Used to convert cell outputs to logits"""
-                return tf.matmul(x, self._dec_W_softmax) + self._dec_b_softmax
+                return tf.matmul(x, w_softmax) + b_softmax
 
             inference_fn = tf.contrib.seq2seq.simple_decoder_fn_inference(
                 output_fn=output_fn,
                 encoder_state=self._dec_initial_state_tuple,
                 embeddings=self._dec_embeddings,
-                start_of_sequence_id=self.start_of_sequence_id,
+                start_of_sequence_id=self.go_token_id,
                 end_of_sequence_id=self.end_of_sequence_id,
                 maximum_length=self.max_length,
                 num_decoder_symbols=self.vocab_size,
@@ -186,9 +199,8 @@ class VAE_LSTM_Model(object):
 
     def sample_z(self, mu, log_var):
         """Sample a z-vector given parameters"""
-        eps = tf.random_normal(shape=tf.shape(mu), stddev=1e-3)
-        # return mu + tf.exp(log_var / 2) * eps
-        return mu + eps
+        eps = tf.random_normal(shape=tf.shape(mu), stddev=1e-2)
+        return mu + tf.exp(log_var / 2) * eps
 
     def setup_loss_and_train(self):
         """Returns the loss op"""
@@ -204,27 +216,24 @@ class VAE_LSTM_Model(object):
             kl_loss = 0.5 * tf.reduce_sum(
                 tf.exp(self.z_logvar) + self.z_mu**2 - 1. - self.z_logvar, 1)
 
+            kl_loss_combined = tf.reduce_mean(kl_loss)
+
+            kl_loss_clipped = tf.maximum(kl_loss_combined, 0.2)
+
             # Combined VAE loss
-            vae_loss = tf.reduce_mean(recon_loss) + 0.003 * tf.nn.l2_loss(
-                self.z)
+            vae_loss = tf.reduce_mean(recon_loss) + kl_loss_clipped
 
             # Summaries to track
             tf.summary.scalar('reconstruction_loss',
                               tf.reduce_mean(recon_loss))
-            tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss))
+            tf.summary.scalar('kl_loss', kl_loss_combined)
+            tf.summary.scalar('kl_loss_clipped', kl_loss_clipped)
             tf.summary.scalar('vae_loss', vae_loss)
 
             self._loss = vae_loss
 
         solver = tf.train.AdamOptimizer().minimize(self._loss)
         self._train_op = solver
-
-    def train(self, session, input_batch):
-        train_op = self.train_op()
-        return session.run(train_op, feed_dict={self.X: input_batch})
-
-    def predict(self, session, input_z):
-        pass
 
 
 if __name__ == "__main__":
